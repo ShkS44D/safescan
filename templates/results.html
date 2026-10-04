@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block content %}
+<h4>Scan results for {{ target }}</h4>
+<div class="card bg-secondary text-light mb-3"><div class="card-body">
+  <h5>Open ports and services</h5>
+  <p>Service labels marked “port hint” are inferred from the port number. Product versions are banner claims.</p>
+  {% if services %}
+  <div class="table-responsive"><table class="table table-dark">
+    <thead><tr><th>Port</th><th>Address</th><th>Service</th><th>Product / version</th><th>Evidence</th><th>Latency</th></tr></thead>
+    <tbody>{% for s in services %}<tr><td>{{ s.port }}/{{ s.transport }}</td><td>{{ s.address }}</td><td>{{ s.service }}</td><td>{{ s.product or 'Unknown' }} {{ s.version or '' }}</td><td>{{ s.confidence }}</td><td>{{ s.latency_ms }} ms</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% for s in services %}<details><summary>Port {{ s.port }} evidence</summary><pre class="text-wrap">{{ s.banner or 'No banner received.' }}</pre>{% if s.probe_error %}<p>{{ s.probe_error }}</p>{% endif %}</details>{% endfor %}
+  {% else %}<p>No open ports detected in the selected range. This does not establish that the target is secure.</p>{% endif %}
+</div></div>
+<div class="card bg-secondary text-light mb-3"><div class="card-body">
+  <h5>OS estimate</h5><p>{{ os_info.result }}</p><p>Method: {{ os_info.method }} · Confidence: {{ os_info.confidence }}</p>
+</div></div>
+<div class="card bg-secondary text-light mb-3"><div class="card-body">
+  <h5>CVE candidates — unverified</h5>
+  {% for port, lookup in cve_results.items() %}
+    <h6>Port {{ port }} · {{ lookup.status }}</h6><p>{{ lookup.message }}</p>
+    {% for c in lookup.candidates %}<p><strong>{{ c.id }}</strong> · CVSS: {{ c.score if c.score is not none else 'Unavailable' }} · {{ c.status }}<br>{{ c.desc }}</p>
+    {% else %}{% if lookup.status == 'complete' %}<p>No keyword candidates returned. This is not a vulnerability clearance.</p>{% endif %}{% endfor %}
+  {% else %}<p>No services available for lookup.</p>{% endfor %}
+</div></div>
+{% for web in web_results %}
+<div class="card bg-secondary text-light mb-3"><div class="card-body">
+  <h5>Web observations · {{ web.target }}</h5><p>Status: {{ web.status }}</p>
+  {% for error in web.errors %}<p>{{ error.reason }} — {{ error.url }}</p>{% endfor %}
+  <p>These checks do not confirm SQL injection or executable XSS. Path responses do not establish exposed sensitive content.</p>
+  {% for f in web.findings %}<div class="border rounded p-2 mb-2"><h6>{{ f.title }}</h6><p>{{ f.status }} · Confidence: {{ f.confidence }}</p><p class="text-break">{{ f.url }}</p><pre class="text-wrap">{{ f.evidence }}</pre></div>
+  {% else %}<p>{% if web.status == 'complete' %}No observations from these limited input probes.{% else %}No observations recorded. Some or all checks did not complete.{% endif %}</p>{% endfor %}
+  <details><summary>Response headers</summary><dl>{% for key, value in web.headers.items() %}<dt>{{ key }}</dt><dd class="text-break">{{ value }}</dd>{% endfor %}</dl></details>
+  <details><summary>robots.txt</summary><pre class="text-wrap">{{ web.robots or 'Not retrieved.' }}</pre></details>
+  <details><summary>Path responses</summary><ul>{% for d in web.dirs %}<li>{{ d.path }} — HTTP {{ d.status }} — {{ d.url }}</li>{% endfor %}</ul></details>
+</div></div>
+{% endfor %}
+<a href="{{ url_for('index') }}" class="btn btn-light mt-4">Back</a>
+{% endblock %}
