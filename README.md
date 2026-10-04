@@ -12,6 +12,10 @@ SafeScan is an evidence-first network exposure assessment platform for authorize
 
 The bundled SQLite database is appropriate for a single-node deployment. Use one application process so the built-in scheduler and worker remain coordinated. A distributed deployment should replace the local job runner and database with a shared queue and managed database.
 
+### Vercel preview
+
+The included `vercel.json` can host the interface as a serverless preview. Vercel uses an ephemeral filesystem, so SQLite accounts, history, schedules, and temporary jobs are not durable across function instances. Long-running network scans and the in-process scheduler are also outside the reliable serverless execution model. Use the Docker/Waitress deployment for the complete application, or migrate persistence and background work to managed database and queue services before treating Vercel as production.
+
 ## Security model
 
 - Every assessment and report is scoped to its owner.
