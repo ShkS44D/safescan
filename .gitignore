@@ -7,3 +7,6 @@ data/*.db-*
 .env
 .vercel/
 .vercel-config/
+
+.vercel
+.env*

@@ -2,7 +2,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 
-LOG_DIR = 'logs'
+LOG_DIR = '/tmp/safescan-logs' if os.getenv('VERCEL') else 'logs'
 os.makedirs(LOG_DIR, exist_ok=True)
 
 def get_logger(name):
