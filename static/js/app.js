@@ -25,8 +25,8 @@ if (profile) {
       if (profile.value !== 'custom' || !startPort.value || !endPort.value) return;
       const start = Number(startPort.value), end = Number(endPort.value);
       if (end < start) endPort.setCustomValidity('End port must be greater than or equal to start port.');
-      else if (document.querySelector('.hosted-form') && end - start + 1 > 1024)
-        endPort.setCustomValidity('Choose no more than 1,024 consecutive ports.');
+      else if (document.querySelector('.hosted-form') && end - start + 1 > Number(document.querySelector('.hosted-form').dataset.maxCustomPorts))
+        endPort.setCustomValidity('Choose no more than 2,048 consecutive ports.');
     };
     profile.addEventListener('change', validateRange);
     startPort.addEventListener('input', validateRange);
