@@ -103,7 +103,7 @@ class PhaseTwoTests(unittest.TestCase):
         stored = jobs.get(job['id'])
         self.assertEqual((stored['status'], stored['progress'], stored['phase']), ('completed', 100, 'Completed'))
         self.assertEqual(stored['result']['summary']['open_ports'], 1)
-        web.session.close.assert_called_once()
+        web.session.close.assert_not_called()
 
     def test_worker_honors_prestart_cancellation(self):
         job = self.create_job()

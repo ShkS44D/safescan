@@ -16,12 +16,12 @@ def query_url(url, key, value):
 
 
 class WebScanner:
-    def __init__(self, timeout=8):
+    def __init__(self, timeout=4):
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'SafeScan/2.0'})
 
-    def scan_http(self, target):
+    def scan_http(self, target, deep=True):
         results = {'target': target, 'status': 'complete', 'headers': {}, 'robots': None,
                    'dirs': [], 'findings': [], 'errors': []}
 
@@ -44,14 +44,15 @@ class WebScanner:
             results['status'] = 'skipped'
             results['errors'].append({'url': target, 'reason': f'HTTP {baseline.status_code}; endpoint probes skipped.'})
             return results
-        robots = get(urljoin(target, '/robots.txt'))
-        if robots is not None and robots.status_code == 200:
-            results['robots'] = robots.text[:2000]
-        for directory in COMMON_DIRS:
-            url = urljoin(target, '/' + directory)
-            response = get(url)
-            if response is not None and response.status_code in (200, 401, 403):
-                results['dirs'].append({'path': directory, 'url': url, 'status': response.status_code})
+        if deep:
+            robots = get(urljoin(target, '/robots.txt'))
+            if robots is not None and robots.status_code == 200:
+                results['robots'] = robots.text[:2000]
+            for directory in COMMON_DIRS:
+                url = urljoin(target, '/' + directory)
+                response = get(url)
+                if response is not None and response.status_code in (200, 401, 403):
+                    results['dirs'].append({'path': directory, 'url': url, 'status': response.status_code})
 
         def finding(title, evidence, url, payload=None, confidence='low', severity='low', remediation='Review the evidence and confirm manually.', status='unverified'):
             results['findings'].append({'title': title, 'evidence': evidence, 'url': url,
@@ -74,6 +75,8 @@ class WebScanner:
             finding('HSTS is missing', 'strict-transport-security was absent from the HTTPS response.', target,
                     confidence='high', severity='medium', remediation='Enable HSTS after confirming all subdomains support HTTPS.', status='observed')
 
+        if not deep:
+            return results
         baseline_body = baseline.text.lower()
         for payload in SQLI_TESTS:
             url = query_url(target, 'q', payload)

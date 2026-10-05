@@ -60,9 +60,9 @@ def end_guest():
 def index(): return render_template('index.html',scans=[],nmap_available=nmap_available(),guest=True)
 
 def scan_config_from_form():
-    target=parse_target(request.form.get('target','')); profile=request.form.get('profile','standard'); engine=request.form.get('engine','socket')
+    target=parse_target(request.form.get('target','')); profile=request.form.get('profile','fast'); engine=request.form.get('engine','socket')
     if engine not in ('socket','nmap') or engine=='nmap' and not nmap_available(): raise ValueError('The selected scan engine is unavailable.')
-    presets={'quick':(1,100,80),'standard':(1,1024,100),'full':(1,65535,200)}
+    presets={'fast':(1,1024,200),'quick':(1,100,120),'standard':(1,1024,200),'full':(1,65535,200)}
     if profile in presets and request.form.get('use_custom')!='1': start,end,threads=presets[profile]
     else: profile='custom'; start,end,threads=validate_scan_options(request.form.get('port_start'),request.form.get('port_end'),request.form.get('threads'))
     return target,{'port_start':start,'port_end':end,'threads':threads,'profile':profile,'engine':engine,'scheme':target['scheme'],'url_port':target['port']}

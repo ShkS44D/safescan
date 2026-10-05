@@ -206,6 +206,14 @@ class CVETests(unittest.TestCase):
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_default_profile_is_fast(self):
+        app.testing = True
+        with patch('app.jobs.create', return_value={'id': 'fast123'}) as create, patch('app.submit'):
+            result = app.test_client().post('/scans', data={'target': 'example.test'})
+        self.assertEqual(result.status_code, 302)
+        config = create.call_args.args[1]
+        self.assertEqual((config['profile'], config['threads']), ('fast', 200))
+
     def test_post_creates_background_job_and_redirects(self):
         app.testing = True
         job = {'id': 'abc123'}

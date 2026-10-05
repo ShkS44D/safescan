@@ -56,14 +56,14 @@ def severity(score):
 class CVELookup:
     NVD_BASE = 'https://services.nvd.nist.gov/rest/json'
 
-    def __init__(self, api_key=None, rate_limit_sleep=6, max_attempts=3):
-        self.api_key, self.rate_limit_sleep, self.max_attempts = api_key, rate_limit_sleep, max_attempts
+    def __init__(self, api_key=None, rate_limit_sleep=6, max_attempts=3, timeout=10):
+        self.api_key, self.rate_limit_sleep, self.max_attempts, self.timeout = api_key, rate_limit_sleep, max_attempts, timeout
 
     def _nvd_get(self, params):
         for attempt in range(self.max_attempts):
             try:
                 response = requests.get(f'{self.NVD_BASE}/cves/2.0', params=params,
-                                        headers={'apiKey': self.api_key} if self.api_key else {}, timeout=10)
+                                        headers={'apiKey': self.api_key} if self.api_key else {}, timeout=self.timeout)
                 if response.status_code == 200: return response.json(), None
                 if response.status_code != 429: return None, f'NVD returned HTTP {response.status_code}.'
             except (requests.RequestException, ValueError): return None, 'NVD lookup could not be completed.'

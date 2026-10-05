@@ -1,12 +1,12 @@
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from scanner.cve_lookup import CVELookup
 from scanner.jobs import get, recover_interrupted, update, utc_now
 from scanner.os_fingerprint import OSFingerprint
-from scanner.port_scanner import PortScanner, ScanCancelled
+from scanner.port_scanner import COMMON_PORTS, PortScanner, ScanCancelled
 from scanner.nmap_scanner import NmapScanner
 from scanner.tls_scanner import inspect_tls
 from scanner.web_scanner import WebScanner
@@ -42,11 +42,16 @@ def _run(scan_id):
 
     try:
         update(scan_id, status='running', phase='Resolving target', progress=2, started_at=utc_now())
+        fast = config.get('profile') == 'fast'
         if config.get('engine') == 'nmap':
             scanner = NmapScanner(job['target'], config['port_start'], config['port_end'])
         else:
+            fast_ports = set(COMMON_PORTS)
+            if config.get('url_port'):
+                fast_ports.add(config['url_port'])
             scanner = PortScanner(job['target'], config['port_start'], config['port_end'], config['threads'],
-                                  web_scheme=config.get('scheme'), web_port=config.get('url_port'))
+                                  timeout=0.35 if fast else 0.6, web_scheme=config.get('scheme'),
+                                  web_port=config.get('url_port'), ports=fast_ports if fast else None)
 
         def port_progress(done, total):
             if cancelled():
@@ -60,24 +65,25 @@ def _run(scan_id):
         os_info = OSFingerprint().fingerprint(job['target'], [s['port'] for s in services], banners=scanner.service_banners)
         endpoints = web_endpoints({'host': job['target'], 'scheme': config.get('scheme'), 'port': config.get('url_port')}, services)
         web_results = []
-        webscan = WebScanner()
-        try:
-            for index, endpoint in enumerate(endpoints):
-                if cancelled():
-                    raise ScanCancelled()
-                update(scan_id, phase=f'Inspecting web endpoint · {index + 1}/{len(endpoints)}', progress=68 + int(14 * index / max(1, len(endpoints))))
-                web_results.append(webscan.scan_http(endpoint))
-        finally:
-            webscan.session.close()
-        tls_results = []
-        for endpoint in endpoints:
-            if endpoint.startswith('https://') and not cancelled():
-                update(scan_id, phase='Inspecting TLS configuration', progress=82)
-                tls_results.append(inspect_tls(endpoint))
+        update(scan_id, phase='Inspecting web endpoints', progress=68)
+        def inspect_web(endpoint):
+            scanner = WebScanner(timeout=3 if fast else 4)
+            try: return scanner.scan_http(endpoint, deep=not fast)
+            finally: scanner.session.close()
+        with ThreadPoolExecutor(max_workers=min(4, max(1, len(endpoints)))) as endpoint_workers:
+            web_futures = [endpoint_workers.submit(inspect_web, endpoint) for endpoint in endpoints]
+            for future in as_completed(web_futures):
+                if cancelled(): raise ScanCancelled()
+                web_results.append(future.result())
+        update(scan_id, phase='Inspecting TLS configuration', progress=82)
+        tls_endpoints = [endpoint for endpoint in endpoints if endpoint.startswith('https://')]
+        with ThreadPoolExecutor(max_workers=min(4, max(1, len(tls_endpoints)))) as tls_workers:
+            tls_results = list(tls_workers.map(inspect_tls, tls_endpoints))
         if cancelled():
             raise ScanCancelled()
         update(scan_id, phase='Looking up CVE candidates', progress=84)
-        cve_results = CVELookup(api_key=os.getenv('NVD_API_KEY')).lookup_services(services)
+        cve_results = CVELookup(api_key=os.getenv('NVD_API_KEY'), rate_limit_sleep=0 if fast else 2,
+                                max_attempts=1 if fast else 2, timeout=4 if fast else 6).lookup_services(services)
         if cancelled():
             raise ScanCancelled()
         started = get(scan_id)['started_at']

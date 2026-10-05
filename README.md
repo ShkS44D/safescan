@@ -62,7 +62,7 @@ Optionally set `NVD_API_KEY` in the environment before starting the application.
 - Scan jobs use `data/scans.db` as a short-lived local work store. They are not exposed as user history.
 - Results use separate overview, service, web, CVE-candidate, and raw-evidence views. The layout is responsive and tables scroll on narrow screens.
 - Completed scans export as JSON or a standalone printable HTML report. The HTML report can be printed or saved as PDF from a browser.
-- Scan profiles provide quick (1–100), standard (1–1024), full (1–65535), and custom ranges.
+- Scan profiles provide fast (common exposure ports with essential web checks), quick (1–100), standard (1–1024), full (1–65535), and custom ranges. Fast is the default; broader profiles intentionally trade speed for coverage.
 
 The background pool is intentionally local and lightweight. It is suitable for this prototype and a single application process. A multi-process or distributed deployment should replace it with a durable task queue.
 

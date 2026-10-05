@@ -12,7 +12,7 @@ def finding(title, severity, evidence, endpoint, remediation, confidence='high')
             'category': 'tls'}
 
 
-def inspect_tls(endpoint, timeout=6):
+def inspect_tls(endpoint, timeout=4):
     parsed = urlsplit(endpoint)
     if parsed.scheme != 'https':
         return None

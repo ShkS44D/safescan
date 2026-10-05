@@ -5,6 +5,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils.helpers import validate_scan_options
 
+COMMON_PORTS = (20, 21, 22, 23, 25, 53, 67, 68, 69, 80, 110, 111, 123, 135, 137, 138, 139,
+                143, 161, 162, 179, 389, 443, 445, 465, 500, 514, 515, 520, 548, 554, 587, 631,
+                636, 873, 902, 989, 990, 993, 995, 1080, 1194, 1433, 1521, 1723, 1883, 2049,
+                2375, 2376, 3000, 3306, 3389, 3690, 4000, 4369, 5000, 5432, 5672, 5900, 5985,
+                5986, 6379, 6443, 6667, 7001, 8000, 8080, 8081, 8443, 8888, 9000, 9042, 9090,
+                9200, 9300, 9418, 11211, 15672, 27017, 27018)
+
 
 def identify_service(port, banner, tls=False):
     result = {'service': 'unknown', 'product': None, 'version': None, 'cpe': None, 'confidence': 'unknown'}
@@ -34,7 +41,7 @@ def identify_service(port, banner, tls=False):
 
 
 class PortScanner:
-    def __init__(self, target, start_port=1, end_port=1024, threads=100, timeout=1.0, web_scheme=None, web_port=None):
+    def __init__(self, target, start_port=1, end_port=1024, threads=100, timeout=0.6, web_scheme=None, web_port=None, ports=None):
         self.target = target
         self.start_port, self.end_port, self.threads = validate_scan_options(start_port, end_port, threads)
         self.timeout = timeout
@@ -42,6 +49,7 @@ class PortScanner:
         self.address = None
         self.web_scheme = web_scheme
         self.web_port = web_port or (443 if web_scheme == 'https' else 80)
+        self.ports = tuple(sorted(set(ports))) if ports else None
 
     def _read_banner(self, sock):
         chunks = bytearray()
@@ -106,7 +114,7 @@ class PortScanner:
         # One resolved address per scan; expose it in every service result.
         self.address = (addresses[0][0], addresses[0][4][0])
         self.service_banners = {}
-        ports = range(self.start_port, self.end_port + 1)
+        ports = self.ports or range(self.start_port, self.end_port + 1)
         total = len(ports)
         services = []
         executor = ThreadPoolExecutor(max_workers=self.threads)
