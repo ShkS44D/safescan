@@ -1,11 +1,120 @@
-{% extends 'base.html' %}{% block content %}
-<section class="hero simple-hero"><div><h1>Scan your network exposure.</h1><p>Check open ports, identify exposed services, and review web, TLS, and vulnerability signals—no account required.</p></div><span class="guest-label">Private temporary session</span></section>
-{% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
-<form class="scan-form {{ 'hosted-form' if hosted else 'local-form' }}" method="post" action="{{ url_for('create_scan') }}" id="scan-form"{% if hosted %} data-max-custom-ports="2048"{% endif %}><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-<div class="field target-field"><label for="target">Target</label><input id="target" name="target" value="{{ request.form.get('target', '') }}" placeholder="example.com or 192.168.1.10" required autofocus><small>Enter an IP address, domain, or HTTP(S) URL.</small></div>
-<div class="field"><label for="profile">Scan profile</label><select id="profile" name="profile"><option value="fast" {{ 'selected' if request.form.get('profile', 'fast') == 'fast' else '' }}>Fast · common ports</option><option value="standard" {{ 'selected' if request.form.get('profile') == 'standard' else '' }}>Standard · ports 1–1024</option><option value="custom" {{ 'selected' if request.form.get('profile') == 'custom' else '' }}>Custom · choose port range</option>{% if not hosted %}<option value="quick" {{ 'selected' if request.form.get('profile') == 'quick' else '' }}>Quick · ports 1–100</option><option value="full" {{ 'selected' if request.form.get('profile') == 'full' else '' }}>Full range · ports 1–65535</option>{% endif %}</select><small id="profile-help">Fast checks common exposure points in seconds.</small></div>
-{% if not hosted %}<div class="field"><label for="engine">Discovery engine</label><select id="engine" name="engine"><option value="socket">Built-in scanner</option>{% if nmap_available %}<option value="nmap">Nmap</option>{% endif %}</select><small>Choose the available discovery method.</small></div>{% endif %}
-<div class="custom-fields" id="custom-fields" hidden><div class="field"><label for="port_start">Start port</label><input id="port_start" name="port_start" type="number" value="{{ request.form.get('port_start', '1') }}" min="1" max="65535" disabled></div><div class="field"><label for="port_end">End port</label><input id="port_end" name="port_end" type="number" value="{{ request.form.get('port_end', '1024') }}" min="1" max="65535" disabled></div>{% if not hosted %}<div class="field"><label for="threads">Workers</label><input id="threads" name="threads" type="number" value="100" min="1" max="200" disabled></div>{% else %}<input name="threads" type="hidden" value="200">{% endif %}<input id="use_custom" name="use_custom" type="hidden" value="0">{% if hosted %}<small class="custom-hint">Choose any consecutive range of up to 2,048 TCP ports.</small>{% endif %}</div>
-<label class="authorization"><input type="checkbox" name="authorized" value="yes" required><span>I own this target or have explicit permission to assess it.</span></label><button class="btn primary" type="submit" id="scan-submit"><span class="submit-label">Start scan</span><span aria-hidden="true">→</span></button><p class="submit-status" id="submit-status" aria-live="polite" hidden>Scanning the selected port range and validating exposed services. Keep this page open.</p></form>
-<div class="guest-note"><strong>Temporary by design</strong><span>SafeScan does not maintain scan history. Your result is isolated to this browser session and automatically expires.</span></div>
-{% endblock %}{% block scripts %}<link href="{{ url_for('static', filename='css/phase3.css', v=2) }}" rel="stylesheet"><script src="{{ url_for('static', filename='js/app.js', v=8) }}"></script>{% endblock %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="SafeScan is a fast online TCP port scanner for authorized security checks.">
+  <meta property="og:title" content="SafeScan · Public TCP Port Scanner">
+  <meta property="og:description" content="Find open TCP ports and identify the services listening on them.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#08111d">
+  <link rel="icon" href="{{ url_for('static', filename='brand/favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v=1) }}">
+  <title>SafeScan · Public TCP Port Scanner</title>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="SafeScan home">
+      <img src="{{ url_for('static', filename='brand/safescan-mark.svg') }}" alt="" width="42" height="48">
+      <span>SafeScan</span>
+    </a>
+  </header>
+
+  <main>
+    <section class="intro" aria-labelledby="page-title">
+      <h1 id="page-title">Scan public TCP ports.</h1>
+      <p>Find open ports and identify the services listening on them.</p>
+    </section>
+
+    <form id="scan-form" class="scanner-panel" novalidate>
+      <div class="field target-field">
+        <label for="target">Target</label>
+        <input id="target" name="target" type="text" maxlength="253"
+               placeholder="example.com or 203.0.113.10" autocomplete="off" required>
+        <small class="field-error" id="target-error"></small>
+      </div>
+      <div class="field mode-field">
+        <label for="scan-mode">Scan mode</label>
+        <select id="scan-mode" name="mode">
+          <option value="common">Common ports (top ~100)</option>
+          <option value="well-known">Well-known (1–1,024)</option>
+          <option value="all">All ports (1–65,535)</option>
+          <option value="custom">Custom range</option>
+        </select>
+      </div>
+      <div id="custom-range" class="custom-range" hidden>
+        <div class="field">
+          <label for="start-port">Start port</label>
+          <input id="start-port" name="start" type="number" min="1" max="65535" value="1">
+        </div>
+        <div class="field">
+          <label for="end-port">End port</label>
+          <input id="end-port" name="end" type="number" min="1" max="65535" value="1024">
+        </div>
+        <small class="field-error range-error" id="range-error"></small>
+      </div>
+      <label class="authorization">
+        <input id="authorized" type="checkbox" required>
+        <span>I own this target or have permission to scan it.</span>
+      </label>
+      <button id="scan-button" class="button primary" type="submit">Scan target</button>
+      <p id="form-error" class="form-error" role="alert" hidden></p>
+    </form>
+
+    <section id="scan-status" class="scan-status" aria-live="polite" hidden>
+      <div class="status-heading">
+        <strong id="status-label">Scanning target…</strong>
+        <div class="status-actions">
+          <span>Elapsed <time id="elapsed">00:00</time></span>
+          <button id="cancel-button" class="button secondary" type="button">Cancel</button>
+        </div>
+      </div>
+      <div class="progress-row">
+        <progress id="progress" max="100" value="0">0%</progress>
+        <strong id="progress-percent">0%</strong>
+      </div>
+      <span id="progress-copy">Ports scanned 0 / 0</span>
+    </section>
+
+    <section id="results" class="results" aria-labelledby="results-title" hidden>
+      <h2 id="results-title" class="sr-only">Scan results</h2>
+      <div class="summary">
+        <div><span>Target</span><strong id="summary-target">—</strong></div>
+        <div><span>Open ports</span><strong id="summary-open">0</strong></div>
+        <div><span>Ports scanned</span><strong id="summary-scanned">0</strong></div>
+        <div><span>Duration</span><strong id="summary-duration">00:00</strong></div>
+      </div>
+
+      <div class="table-shell">
+        <table>
+          <thead><tr>
+            <th><button class="sort-button" data-sort="port">Port <span aria-hidden="true">↕</span></button></th>
+            <th><button class="sort-button" data-sort="state">State <span aria-hidden="true">↕</span></button></th>
+            <th><button class="sort-button" data-sort="service">Service <span aria-hidden="true">↕</span></button></th>
+            <th><button class="sort-button" data-sort="product">Product / Version <span aria-hidden="true">↕</span></button></th>
+            <th>Banner</th>
+          </tr></thead>
+          <tbody id="results-body"></tbody>
+        </table>
+        <div id="empty-state" class="empty-state" hidden>
+          <strong>No open ports found in this range</strong>
+          <span>Closed and filtered ports are not listed.</span>
+        </div>
+      </div>
+
+      <p class="scope-note">Only open ports are shown. Closed and filtered ports are not listed.</p>
+      <div class="result-actions">
+        <div>
+          <button id="download-json" class="button secondary" type="button">Download JSON</button>
+          <button id="download-csv" class="button secondary" type="button">Download CSV</button>
+          <button id="copy-results" class="button secondary" type="button">Copy results</button>
+        </div>
+        <button id="scan-again" class="button primary" type="button">Scan again</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>Use this tool only on systems you own or have explicit permission to scan.</footer>
+  <script src="{{ url_for('static', filename='js/app.js', v=1) }}" defer></script>
+</body>
+</html>

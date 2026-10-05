@@ -1,166 +1,157 @@
-import io, json, os, secrets
-from datetime import datetime
-from flask import Flask, abort, flash, g, jsonify, make_response, redirect, render_template, request, session, url_for
-from scanner import jobs
-from scanner.nmap_scanner import available as nmap_available
-from scanner.scan_manager import _run, submit
-from security import audit, csrf_token, rate_limit, scanner_access_required, verify_csrf
-from utils.helpers import parse_target, validate_scan_options
-from utils.logger import get_logger
+"""Stateless Flask application for the SafeScan public TCP port scanner."""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+import time
+from collections import defaultdict, deque
+from typing import Any
+
+from flask import Flask, jsonify, render_template, request
+
+from scanner.port_scanner import scan_ports
+from utils.netguard import normalize_target, require_public_ip, resolve_public_target
+
+RATE_LIMIT_REQUESTS = int(os.getenv("SAFESCAN_RATE_LIMIT_REQUESTS", "90"))
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("SAFESCAN_RATE_LIMIT_WINDOW", "60"))
+MAX_CHUNK_PORTS = 2_000
 
 app = Flask(__name__)
-app.config.update(SECRET_KEY=os.getenv('SAFESCAN_SECRET_KEY') or os.getenv('VULNSCANNER_SECRET_KEY') or os.urandom(32), SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=os.getenv('SAFESCAN_SECURE_COOKIES',os.getenv('VULNSCANNER_SECURE_COOKIES','0'))=='1', MAX_CONTENT_LENGTH=65536)
-logger=get_logger('app')
+app.config.update(MAX_CONTENT_LENGTH=16_384)
+logger = logging.getLogger("safescan")
 
-@app.before_request
-def request_security():
-    jobs.cleanup_expired_guest_scans()
-    session.pop('user_id',None)
-    g.user=None
-    if request.endpoint not in ('static','health') and not session.get('guest_id'):
-        session['guest_id']=secrets.token_urlsafe(24)
-    verify_csrf()
+_rate_events: dict[str, deque[float]] = defaultdict(deque)
+_rate_lock = threading.Lock()
+
+
+def json_error(message: str, status: int) -> tuple[Any, int]:
+    """Return a consistent JSON error response."""
+    return jsonify({"error": message}), status
+
+
+def client_ip() -> str:
+    """Return the direct peer address without trusting forwarded headers."""
+    return request.remote_addr or "unknown"
+
+
+def within_rate_limit(address: str) -> bool:
+    """Apply a best-effort per-process request limit."""
+    now = time.monotonic()
+    cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+    with _rate_lock:
+        events = _rate_events[address]
+        while events and events[0] < cutoff:
+            events.popleft()
+        if len(events) >= RATE_LIMIT_REQUESTS:
+            return False
+        events.append(now)
+        return True
+
+
+def require_json() -> tuple[dict[str, Any] | None, tuple[Any, int] | None]:
+    """Read a JSON object or return an API error."""
+    if not request.is_json:
+        return None, json_error("Content-Type must be application/json.", 400)
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return None, json_error("Request body must be a JSON object.", 400)
+    return body, None
+
 
 @app.after_request
 def security_headers(response):
-    response.headers.update({'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'strict-origin-when-cross-origin',
-      'Permissions-Policy':'camera=(), microphone=(), geolocation=()',
-      'Content-Security-Policy':"default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"})
-    if request.is_secure: response.headers['Strict-Transport-Security']='max-age=31536000; includeSubDomains'
+    """Add browser protections without enabling cross-origin API access."""
+    response.headers.update(
+        {
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+            "Content-Security-Policy": (
+                "default-src 'self'; style-src 'self'; script-src 'self'; "
+                "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+                "base-uri 'self'; form-action 'self'"
+            ),
+        }
+    )
     return response
 
-app.jinja_env.globals['csrf_token']=csrf_token
 
-@app.template_filter('datetime_short')
-def datetime_short(value): return datetime.fromisoformat(value).astimezone().strftime('%b %d, %Y · %H:%M') if value else '—'
-@app.template_filter('duration')
-def duration(value):
-    seconds=int(value or 0); return f'{seconds//60}m {seconds%60:02d}s' if seconds>=60 else f'{seconds}s'
+@app.get("/")
+def index():
+    """Render the scanner interface."""
+    return render_template("index.html")
 
-@app.route('/login',methods=['GET','POST'])
-def login(): return redirect(url_for('index'))
 
-@app.route('/register',methods=['GET','POST'])
-def register(): return redirect(url_for('index'))
+@app.post("/api/resolve")
+def resolve_target():
+    """Validate a target, resolve it once, and reject unsafe DNS answers."""
+    if not within_rate_limit(client_ip()):
+        return json_error("Too many requests. Please wait a moment and try again.", 429)
+    body, error = require_json()
+    if error:
+        return error
+    try:
+        host = normalize_target(body.get("target"))
+        ip, ips = resolve_public_target(host)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
+    return jsonify({"host": host, "ip": ip, "ips": ips})
 
-@app.post('/logout')
-def logout(): audit('logout'); session.clear(); return redirect(url_for('login'))
 
-@app.post('/guest')
-def guest_access():
-    session.clear(); session['guest_id']=secrets.token_urlsafe(24); csrf_token(); return redirect(url_for('index'))
+@app.post("/api/scan")
+def scan_chunk():
+    """Scan one client-selected TCP port chunk."""
+    if not within_rate_limit(client_ip()):
+        return json_error("Too many requests. Please wait a moment and try again.", 429)
+    body, error = require_json()
+    if error:
+        return error
+    if body.get("authorized") is not True:
+        return json_error("Confirm that you have permission to scan this target.", 400)
+    try:
+        ip = require_public_ip(body.get("ip"), allow_private=app.testing)
+        host = normalize_target(body.get("host"))
+        start = int(body.get("start"))
+        end = int(body.get("end"))
+    except (TypeError, ValueError) as exc:
+        message = str(exc) or "Start and end ports must be whole numbers."
+        return json_error(message, 400)
+    if not 1 <= start <= end <= 65_535:
+        return json_error("Ports must satisfy 1 <= start <= end <= 65535.", 400)
+    if end - start + 1 > MAX_CHUNK_PORTS:
+        return json_error("A scan request can contain at most 2,000 ports.", 400)
+    try:
+        services = scan_ports(ip=ip, host=host, start=start, end=end)
+    except Exception:
+        logger.exception("Port scan chunk failed for client %s", client_ip())
+        return json_error("The scan chunk could not be completed.", 500)
+    return jsonify({"start": start, "end": end, "scanned": end - start + 1, "open": services})
 
-@app.post('/guest/end')
-@scanner_access_required
-def end_guest():
-    jobs.delete_guest_scans(session.get('guest_id')); session.clear(); return redirect(url_for('login'))
 
-@app.get('/')
-def index(): return render_template('index.html',scans=[],nmap_available=nmap_available(),guest=True,hosted=bool(os.getenv('VERCEL')))
+@app.get("/health")
+def health():
+    """Return service health."""
+    return jsonify({"status": "ok"})
 
-def scan_config_from_form():
-    target=parse_target(request.form.get('target','')); profile=request.form.get('profile','fast'); engine=request.form.get('engine','socket')
-    if engine not in ('socket','nmap') or engine=='nmap' and not nmap_available(): raise ValueError('The selected scan engine is unavailable.')
-    presets={'fast':(1,1024,200),'quick':(1,100,120),'standard':(1,1024,200),'full':(1,65535,200)}
-    if profile in presets and request.form.get('use_custom')!='1': start,end,threads=presets[profile]
-    else: profile='custom'; start,end,threads=validate_scan_options(request.form.get('port_start'),request.form.get('port_end'),request.form.get('threads'))
-    return target,{'port_start':start,'port_end':end,'threads':threads,'profile':profile,'engine':engine,'scheme':target['scheme'],'url_port':target['port']}
 
-@app.post('/scans')
-@scanner_access_required
-def create_scan():
-    actor=f'user:{g.user["id"]}' if g.user else f'guest:{session["guest_id"]}'
-    if not rate_limit(f'scan:{actor}',10 if g.user else 3,3600): abort(429)
-    if request.form.get('authorized')!='yes' and not app.testing: flash('Confirm that you are authorized to assess this target.','error'); return redirect(url_for('index'))
-    try: target,config=scan_config_from_form()
-    except ValueError as exc: return render_template('index.html',scans=[],nmap_available=nmap_available(),guest=True,hosted=bool(os.getenv('VERCEL')),error=str(exc)),400
-    if os.getenv('VERCEL') and (config['profile'] not in ('fast','standard','custom') or
-                              config['profile']=='custom' and config['port_end']-config['port_start']+1 > 2048):
-        return render_template('index.html',scans=[],nmap_available=False,guest=True,hosted=True,
-                               error='Custom scans on this site can cover up to 2,048 consecutive TCP ports. Choose a smaller range.'),400
-    if not g.user: config['guest_id']=session['guest_id']
-    job=jobs.create(target['host'],config,g.user['id'] if g.user else None); audit('scan.create',job['id'])
-    if os.getenv('VERCEL'):
-        _run(job['id'])
-    else:
-        submit(job['id'])
-    return redirect(url_for('scan_detail',scan_id=job['id']))
-
-@app.get('/history')
-def history(): return redirect(url_for('index'))
-
-def require_scan(scan_id):
-    job=jobs.get(scan_id)
-    owned = job and g.user and job.get('owner_id')==g.user['id']
-    guest_owned = job and not g.user and session.get('guest_id') and job['config'].get('guest_id')==session['guest_id']
-    if not owned and not guest_owned: abort(404)
-    return job
-
-@app.get('/scans/<scan_id>')
-@scanner_access_required
-def scan_detail(scan_id):
-    job=require_scan(scan_id)
-    return render_template('scan.html',scan=job,previous=None,comparison=None,hosted=bool(os.getenv('VERCEL')))
-
-@app.get('/api/scans/<scan_id>')
-@scanner_access_required
-def scan_status(scan_id):
-    job=require_scan(scan_id); return jsonify({k:job[k] for k in ('id','target','status','phase','progress','error','finished_at')})
-
-@app.post('/scans/<scan_id>/cancel')
-@scanner_access_required
-def cancel_scan(scan_id):
-    job=require_scan(scan_id)
-    if job['status'] in ('queued','running'): jobs.request_cancel(scan_id); audit('scan.cancel',scan_id)
-    return redirect(url_for('scan_detail',scan_id=scan_id))
-
-def completed_scan(scan_id):
-    job=require_scan(scan_id)
-    if job['status']!='completed': abort(409)
-    return job
-
-@app.get('/scans/<scan_id>/report.json')
-@scanner_access_required
-def report_json(scan_id):
-    response=make_response(json.dumps(completed_scan(scan_id),indent=2)); response.headers['Content-Type']='application/json'; response.headers['Content-Disposition']=f'attachment; filename="safescan-{scan_id}.json"'; return response
-
-@app.get('/scans/<scan_id>/report.html')
-@scanner_access_required
-def report_html(scan_id):
-    response=make_response(render_template('report.html',scan=completed_scan(scan_id))); response.headers['Content-Disposition']=f'attachment; filename="safescan-{scan_id}.html"'; return response
-
-@app.get('/scans/<scan_id>/report.pdf')
-@scanner_access_required
-def report_pdf(scan_id):
-    job=completed_scan(scan_id)
-    try: from reportlab.lib.pagesizes import A4; from reportlab.pdfgen.canvas import Canvas
-    except ImportError: abort(501,'PDF support is not installed.')
-    output=io.BytesIO(); canvas=Canvas(output,pagesize=A4); _,height=A4; y=height-50; canvas.setTitle(f'SafeScan report - {job["target"]}'); canvas.setFont('Helvetica-Bold',18); canvas.drawString(45,y,'SafeScan Network Exposure Report'); y-=28; canvas.setFont('Helvetica',10)
-    lines=[f'Target: {job["target"]}',f'Scan ID: {job["id"]}',f'Completed: {job["finished_at"]}','',f'Open ports: {job["result"]["summary"]["open_ports"]}    Findings: {job["result"]["summary"]["observations"]}','','Findings']
-    for finding in job['result'].get('findings',[]): lines += [f'[{finding.get("severity","unknown").upper()}] {finding.get("title")}',f'Evidence: {finding.get("evidence")}',f'Remediation: {finding.get("remediation")}','']
-    for line in lines:
-        for segment in [line[i:i+105] for i in range(0,max(1,len(line)),105)]:
-            if y<50: canvas.showPage(); canvas.setFont('Helvetica',10); y=height-50
-            canvas.drawString(45,y,segment); y-=14
-    canvas.save(); response=make_response(output.getvalue()); response.headers['Content-Type']='application/pdf'; response.headers['Content-Disposition']=f'attachment; filename="safescan-{scan_id}.pdf"'; return response
-
-@app.route('/schedules',methods=['GET','POST'])
-def schedules(): return redirect(url_for('index'))
-
-@app.post('/schedules/<schedule_id>/delete')
-def remove_schedule(schedule_id): return redirect(url_for('index'))
-
-@app.get('/health')
-def health(): return jsonify({'status':'ok'})
-
-@app.errorhandler(400)
 @app.errorhandler(404)
-@app.errorhandler(409)
-@app.errorhandler(429)
-@app.errorhandler(500)
-def friendly_error(error):
-    code=getattr(error,'code',500); messages={400:'The request could not be verified.',404:'That page or assessment was not found.',409:'This action is not available for the current assessment.',429:'Too many requests. Please wait and try again.',500:'The application could not complete that request.'}
-    return render_template('error.html',code=code,message=messages.get(code,messages[500])),code
+def not_found(_error):
+    return json_error("Not found.", 404)
 
-if __name__=='__main__': app.run(host=os.getenv('SAFESCAN_HOST',os.getenv('VULNSCANNER_HOST','127.0.0.1')),port=int(os.getenv('PORT','5000')),debug=False)
+
+@app.errorhandler(405)
+def method_not_allowed(_error):
+    return json_error("Method not allowed.", 405)
+
+
+@app.errorhandler(500)
+def internal_error(_error):
+    return json_error("The request could not be completed.", 500)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    app.run(host=os.getenv("SAFESCAN_HOST", "127.0.0.1"), port=int(os.getenv("PORT", "5000")))

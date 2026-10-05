@@ -1,1 +1,0 @@
-{% extends 'base.html' %}{% block title %}{{ code }} · SafeScan{% endblock %}{% block content %}<section class="error-page"><strong>{{ code }}</strong><h1>{{ message }}</h1><p>No changes were made. Return to the scanner and try again.</p><a class="btn primary" href="{{ url_for('index') }}">Return to scanner</a></section>{% endblock %}
