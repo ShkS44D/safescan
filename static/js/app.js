@@ -1,7 +1,20 @@
 const profile = document.querySelector('#profile');
 if (profile) {
   const custom = document.querySelector('#custom-fields'); const flag = document.querySelector('#use_custom');
-  const sync = () => { const active = profile.value === 'custom'; custom.hidden = !active; flag.value = active ? '1' : '0'; };
+  const help = document.querySelector('#profile-help');
+  const descriptions = {
+    fast: 'Checks frequently exposed TCP ports for the quickest result.',
+    quick: 'Checks every TCP port from 1–100.',
+    standard: 'Checks every TCP port from 1–1024 for broader coverage.',
+    full: 'Checks all 65,535 TCP ports and can take several minutes.',
+    custom: 'Choose a specific TCP port range and worker count.'
+  };
+  const sync = () => {
+    const active = profile.value === 'custom';
+    custom.hidden = !active;
+    flag.value = active ? '1' : '0';
+    if (help) help.textContent = descriptions[profile.value] || descriptions.fast;
+  };
   profile.addEventListener('change', sync); sync();
 }
 const scanForm = document.querySelector('#scan-form');

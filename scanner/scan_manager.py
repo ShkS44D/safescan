@@ -42,7 +42,9 @@ def _run(scan_id):
 
     try:
         update(scan_id, status='running', phase='Resolving target', progress=2, started_at=utc_now())
-        fast = config.get('profile') == 'fast'
+        # Hosted scans must finish within one serverless request. Standard
+        # broadens discovery while retaining the lightweight analysis path.
+        fast = config.get('profile') == 'fast' or bool(os.getenv('VERCEL'))
         if config.get('engine') == 'nmap':
             scanner = NmapScanner(job['target'], config['port_start'], config['port_end'])
         else:
