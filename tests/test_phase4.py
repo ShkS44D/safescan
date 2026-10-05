@@ -19,6 +19,13 @@ class ProductionTests(unittest.TestCase):
         finally: app.testing=True
     def test_security_headers(self):
         response=self.client.get('/health'); self.assertEqual(response.headers['X-Frame-Options'],'DENY'); self.assertIn("default-src 'self'",response.headers['Content-Security-Policy'])
+    def test_public_scanner_requires_no_account(self):
+        app.testing=False
+        try:
+            response=self.client.get('/'); self.assertEqual(response.status_code,200)
+            self.assertIn(b'no account required',response.data.lower())
+            self.assertNotIn(b'Create account',response.data)
+        finally: app.testing=True
     def test_comparison(self):
         old={'findings':[{'category':'tls','title':'Old','endpoint':'x'},{'category':'web','title':'Same','url':'u'}]}; new={'findings':[{'category':'web','title':'Same','url':'u'},{'category':'cve','title':'New','endpoint':'x'}]}
         result=compare_results(new,old); self.assertEqual((len(result['new']),len(result['resolved']),len(result['unchanged'])),(1,1,1))

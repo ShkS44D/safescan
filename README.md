@@ -1,6 +1,6 @@
 # SafeScan
 
-SafeScan is an evidence-first network exposure assessment platform for authorized security testing. It provides account-isolated scan history, TCP discovery, service and CPE identification, web/TLS checks, version-aware NVD matching, recurring assessments, change comparison, webhook notifications, and HTML/JSON/PDF reporting.
+SafeScan is a public, no-account network exposure scanner for authorized security testing. Enter a target, choose a scan profile, and receive TCP discovery, service and CPE identification, web/TLS checks, version-aware NVD matching, and downloadable HTML/JSON/PDF reports. Results are private to the current browser session and automatically expire after two hours; SafeScan does not provide account creation or scan history.
 
 ## Production setup
 
@@ -10,18 +10,17 @@ SafeScan is an evidence-first network exposure assessment platform for authorize
 4. Set `SAFESCAN_SECURE_COOKIES=1` whenever HTTPS is enabled.
 5. Optionally set `NVD_API_KEY` and install Nmap for stronger service detection.
 
-The bundled SQLite database is appropriate for a single-node deployment. Use one application process so the built-in scheduler and worker remain coordinated. A distributed deployment should replace the local job runner and database with a shared queue and managed database.
+The bundled SQLite database is used only for short-lived scan jobs in a single-node deployment. Use one application process so the local worker remains coordinated. A distributed deployment should replace the local job runner with a shared queue and managed temporary store.
 
 ### Vercel preview
 
-The included `vercel.json` can host the interface as a serverless preview. Vercel uses an ephemeral filesystem, so SQLite accounts, history, schedules, and temporary jobs are not durable across function instances. Long-running network scans and the in-process scheduler are also outside the reliable serverless execution model. Use the Docker/Waitress deployment for the complete application, or migrate persistence and background work to managed database and queue services before treating Vercel as production.
+The included `vercel.json` can host the interface as a serverless preview. Vercel uses an ephemeral filesystem, so temporary jobs are not durable across function instances. Long-running network scans and in-process workers are also outside the reliable serverless execution model. Use the Docker/Waitress deployment for the complete application, or migrate background work to managed queue and worker services before treating Vercel as production.
 
 ## Security model
 
-- Every assessment and report is scoped to its owner.
-- Passwords use PBKDF2-HMAC-SHA256 with 600,000 iterations and unique salts.
-- State changes require CSRF tokens; login and scan creation are throttled.
-- Webhook destinations must use HTTPS and resolve only to public addresses.
+- Every assessment and report is scoped to an anonymous browser session.
+- Temporary scan records expire automatically after two hours.
+- State changes require CSRF tokens and scan creation is throttled.
 - Responses include a restrictive content security policy and standard browser hardening headers.
 - Users must affirm authorization before starting an assessment.
 
@@ -59,8 +58,8 @@ Optionally set `NVD_API_KEY` in the environment before starting the application.
 
 - `POST /scans` validates a scan request, stores it in SQLite, dispatches it to a two-worker background pool, and redirects immediately to a progress page.
 - Progress is persisted by phase and percentage. The page polls a small JSON endpoint and refreshes into the final result when work finishes.
-- A running scan can be cancelled. Pending port tasks are cancelled and the terminal state is retained in history.
-- History persists in `data/scans.db`. A scan interrupted by an application restart is marked failed; queued work is submitted again at startup.
+- A running scan can be cancelled. Pending port tasks are cancelled and the temporary result remains available to the same browser session until it expires.
+- Scan jobs use `data/scans.db` as a short-lived local work store. They are not exposed as user history.
 - Results use separate overview, service, web, CVE-candidate, and raw-evidence views. The layout is responsive and tables scroll on narrow screens.
 - Completed scans export as JSON or a standalone printable HTML report. The HTML report can be printed or saved as PDF from a browser.
 - Scan profiles provide quick (1–100), standard (1–1024), full (1–65535), and custom ranges.
@@ -90,4 +89,4 @@ Tests use mocked web/NVD responses and a temporary loopback TCP server. No exter
 
 Only open TCP services are returned by the built-in engine; connection failures are not classified as closed versus filtered. One resolved address is scanned; web and TLS checks resolve the hostname independently. Directory responses may be wildcard/custom error pages. CPE mappings cover a limited product set, and NVD applicability does not prove exploitability or account for vendor backports. Job execution is local to one process and provides no distributed worker guarantees.
 
-The current app has no authentication or target restrictions and its development server binds to all interfaces. Use it in a controlled environment against systems you are authorized to assess. Public deployment hardening belongs to the later deployment phase.
+SafeScan intentionally has no accounts. Anonymous sessions, authorization confirmation, CSRF protection, request throttling, private-address protections in outbound web checks, and restrictive browser headers reduce misuse, but they do not replace deployment-level monitoring and abuse controls. Use it only against systems you own or are explicitly authorized to assess.

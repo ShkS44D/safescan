@@ -48,8 +48,8 @@ class PhaseTwoTests(unittest.TestCase):
         self.assertEqual(stored['result']['summary']['open_ports'], 1)
         self.assertEqual([item['id'] for item in jobs.list_recent()], [second['id'], first['id']])
         page = self.client.get('/history')
-        self.assertIn(b'example.test', page.data)
-        self.assertIn(b'second.test', page.data)
+        self.assertEqual(page.status_code, 302)
+        self.assertEqual(page.headers['Location'], '/')
 
     def test_progress_api_and_cancel(self):
         job = self.create_job()
