@@ -2,20 +2,37 @@ const profile = document.querySelector('#profile');
 if (profile) {
   const custom = document.querySelector('#custom-fields'); const flag = document.querySelector('#use_custom');
   const help = document.querySelector('#profile-help');
+  const startPort = document.querySelector('#port_start');
+  const endPort = document.querySelector('#port_end');
   const descriptions = {
     fast: 'Checks frequently exposed TCP ports for the quickest result.',
     quick: 'Checks every TCP port from 1–100.',
     standard: 'Checks every TCP port from 1–1024 for broader coverage.',
     full: 'Checks all 65,535 TCP ports and can take several minutes.',
-    custom: 'Choose a specific TCP port range and worker count.'
+    custom: 'Choose the TCP ports you want to check.'
   };
   const sync = () => {
     const active = profile.value === 'custom';
     custom.hidden = !active;
     flag.value = active ? '1' : '0';
+    custom.querySelectorAll('input[type="number"]').forEach(input => { input.disabled = !active; });
     if (help) help.textContent = descriptions[profile.value] || descriptions.fast;
   };
   profile.addEventListener('change', sync); sync();
+  if (startPort && endPort) {
+    const validateRange = () => {
+      endPort.setCustomValidity('');
+      if (profile.value !== 'custom' || !startPort.value || !endPort.value) return;
+      const start = Number(startPort.value), end = Number(endPort.value);
+      if (end < start) endPort.setCustomValidity('End port must be greater than or equal to start port.');
+      else if (document.querySelector('.hosted-form') && end - start + 1 > 1024)
+        endPort.setCustomValidity('Choose no more than 1,024 consecutive ports.');
+    };
+    profile.addEventListener('change', validateRange);
+    startPort.addEventListener('input', validateRange);
+    endPort.addEventListener('input', validateRange);
+    validateRange();
+  }
 }
 const scanForm = document.querySelector('#scan-form');
 if (scanForm) {

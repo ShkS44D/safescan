@@ -42,9 +42,9 @@ def _run(scan_id):
 
     try:
         update(scan_id, status='running', phase='Resolving target', progress=2, started_at=utc_now())
-        # Hosted scans must finish within one serverless request. Standard
-        # broadens discovery while retaining the lightweight analysis path.
-        fast = config.get('profile') == 'fast' or bool(os.getenv('VERCEL'))
+        fast = config.get('profile') == 'fast'
+        # Keep hosted analysis short without changing the selected port range.
+        lightweight = fast or bool(os.getenv('VERCEL'))
         if config.get('engine') == 'nmap':
             scanner = NmapScanner(job['target'], config['port_start'], config['port_end'])
         else:
@@ -52,7 +52,7 @@ def _run(scan_id):
             if config.get('url_port'):
                 fast_ports.add(config['url_port'])
             scanner = PortScanner(job['target'], config['port_start'], config['port_end'], config['threads'],
-                                  timeout=0.35 if fast else 0.6, web_scheme=config.get('scheme'),
+                                  timeout=0.35 if lightweight else 0.6, web_scheme=config.get('scheme'),
                                   web_port=config.get('url_port'), ports=fast_ports if fast else None)
 
         def port_progress(done, total):
@@ -69,8 +69,8 @@ def _run(scan_id):
         web_results = []
         update(scan_id, phase='Inspecting web endpoints', progress=68)
         def inspect_web(endpoint):
-            scanner = WebScanner(timeout=3 if fast else 4)
-            try: return scanner.scan_http(endpoint, deep=not fast)
+            scanner = WebScanner(timeout=3 if lightweight else 4)
+            try: return scanner.scan_http(endpoint, deep=not lightweight)
             finally: scanner.session.close()
         with ThreadPoolExecutor(max_workers=min(4, max(1, len(endpoints)))) as endpoint_workers:
             web_futures = [endpoint_workers.submit(inspect_web, endpoint) for endpoint in endpoints]
@@ -84,8 +84,8 @@ def _run(scan_id):
         if cancelled():
             raise ScanCancelled()
         update(scan_id, phase='Looking up CVE candidates', progress=84)
-        cve_results = CVELookup(api_key=os.getenv('NVD_API_KEY'), rate_limit_sleep=0 if fast else 2,
-                                max_attempts=1 if fast else 2, timeout=4 if fast else 6).lookup_services(services)
+        cve_results = CVELookup(api_key=os.getenv('NVD_API_KEY'), rate_limit_sleep=0 if lightweight else 2,
+                                max_attempts=1 if lightweight else 2, timeout=4 if lightweight else 6).lookup_services(services)
         if cancelled():
             raise ScanCancelled()
         started = get(scan_id)['started_at']

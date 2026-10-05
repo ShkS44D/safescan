@@ -75,9 +75,10 @@ def create_scan():
     if request.form.get('authorized')!='yes' and not app.testing: flash('Confirm that you are authorized to assess this target.','error'); return redirect(url_for('index'))
     try: target,config=scan_config_from_form()
     except ValueError as exc: return render_template('index.html',scans=[],nmap_available=nmap_available(),guest=True,hosted=bool(os.getenv('VERCEL')),error=str(exc)),400
-    if os.getenv('VERCEL') and config['profile'] not in ('fast','standard'):
+    if os.getenv('VERCEL') and (config['profile'] not in ('fast','standard','custom') or
+                              config['profile']=='custom' and config['port_end']-config['port_start']+1 > 1024):
         return render_template('index.html',scans=[],nmap_available=False,guest=True,hosted=True,
-                               error='The hosted scanner supports Fast and Standard scans. Use the self-hosted version for custom or full-range scanning.'),400
+                               error='Custom scans on this site can cover up to 1,024 consecutive TCP ports. Choose a smaller range.'),400
     if not g.user: config['guest_id']=session['guest_id']
     job=jobs.create(target['host'],config,g.user['id'] if g.user else None); audit('scan.create',job['id'])
     if os.getenv('VERCEL'):
