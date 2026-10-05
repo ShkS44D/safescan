@@ -26,6 +26,20 @@ class ProductionTests(unittest.TestCase):
             self.assertIn(b'no account required',response.data.lower())
             self.assertNotIn(b'Create account',response.data)
         finally: app.testing=True
+    def test_vercel_runs_fast_scan_inline(self):
+        with patch.dict('os.environ', {'VERCEL': '1'}), \
+             patch('app.jobs.create', return_value={'id': 'inline123'}) as create, \
+             patch('app._run') as run_now, patch('app.submit') as submit:
+            response=self.client.post('/scans',data={'target':'example.test','profile':'fast'})
+        self.assertEqual(response.status_code,302)
+        self.assertEqual(create.call_args.args[1]['profile'],'fast')
+        run_now.assert_called_once_with('inline123')
+        submit.assert_not_called()
+    def test_vercel_home_only_offers_fast_profile(self):
+        with patch.dict('os.environ', {'VERCEL': '1'}):
+            response=self.client.get('/')
+        self.assertIn(b'Fast \xc2\xb7 common ports',response.data)
+        self.assertNotIn(b'Full range',response.data)
     def test_comparison(self):
         old={'findings':[{'category':'tls','title':'Old','endpoint':'x'},{'category':'web','title':'Same','url':'u'}]}; new={'findings':[{'category':'web','title':'Same','url':'u'},{'category':'cve','title':'New','endpoint':'x'}]}
         result=compare_results(new,old); self.assertEqual((len(result['new']),len(result['resolved']),len(result['unchanged'])),(1,1,1))

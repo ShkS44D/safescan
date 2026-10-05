@@ -1,0 +1,39 @@
+.progress-track {
+  display: block;
+  width: 100%;
+  height: 7px;
+  border: 0;
+  border-radius: 5px;
+  margin: 24px 0;
+  overflow: hidden;
+  background: #17313f;
+  appearance: none;
+}
+
+.progress-track::-webkit-progress-bar {
+  background: #17313f;
+  border-radius: 5px;
+}
+
+.progress-track::-webkit-progress-value,
+.progress-track::-moz-progress-bar {
+  background: var(--cyan);
+  border-radius: 5px;
+}
+
+.submit-status {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.btn:disabled {
+  cursor: wait;
+  opacity: .72;
+}
+
+@media (max-width: 800px) {
+  .progress-copy { align-items: flex-start; }
+  .progress-copy p { margin-bottom: 0; }
+}

@@ -1,6 +1,6 @@
 .tabs a{border-bottom:3px solid transparent;color:var(--muted);font-weight:600;padding:16px 4px;white-space:nowrap}
 .tabs a:hover,.tabs .overview-tab{color:var(--cyan);border-color:var(--cyan)}
 .tab-panel{display:none;padding-top:26px}.tab-panel#overview{display:block}
-.result-sections:has(.tab-panel:target) #overview{display:none}.tab-panel:target{display:block}
+.result-sections:has(.tab-panel:not(#overview):target) #overview{display:none}.tab-panel:target{display:block}
 body:has(#services:target) .tabs a,body:has(#web:target) .tabs a,body:has(#tls:target) .tabs a,body:has(#cves:target) .tabs a,body:has(#evidence:target) .tabs a{color:var(--muted);border-color:transparent}
 body:has(#services:target) .services-tab,body:has(#web:target) .web-tab,body:has(#tls:target) .tls-tab,body:has(#cves:target) .cves-tab,body:has(#evidence:target) .evidence-tab{color:var(--cyan);border-color:var(--cyan)}

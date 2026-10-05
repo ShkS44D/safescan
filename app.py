@@ -3,7 +3,7 @@ from datetime import datetime
 from flask import Flask, abort, flash, g, jsonify, make_response, redirect, render_template, request, session, url_for
 from scanner import jobs
 from scanner.nmap_scanner import available as nmap_available
-from scanner.scan_manager import submit
+from scanner.scan_manager import _run, submit
 from security import audit, csrf_token, rate_limit, scanner_access_required, verify_csrf
 from utils.helpers import parse_target, validate_scan_options
 from utils.logger import get_logger
@@ -57,7 +57,7 @@ def end_guest():
     jobs.delete_guest_scans(session.get('guest_id')); session.clear(); return redirect(url_for('login'))
 
 @app.get('/')
-def index(): return render_template('index.html',scans=[],nmap_available=nmap_available(),guest=True)
+def index(): return render_template('index.html',scans=[],nmap_available=nmap_available(),guest=True,hosted=bool(os.getenv('VERCEL')))
 
 def scan_config_from_form():
     target=parse_target(request.form.get('target','')); profile=request.form.get('profile','fast'); engine=request.form.get('engine','socket')
@@ -74,9 +74,17 @@ def create_scan():
     if not rate_limit(f'scan:{actor}',10 if g.user else 3,3600): abort(429)
     if request.form.get('authorized')!='yes' and not app.testing: flash('Confirm that you are authorized to assess this target.','error'); return redirect(url_for('index'))
     try: target,config=scan_config_from_form()
-    except ValueError as exc: return render_template('index.html',scans=[],nmap_available=nmap_available(),guest=True,error=str(exc)),400
+    except ValueError as exc: return render_template('index.html',scans=[],nmap_available=nmap_available(),guest=True,hosted=bool(os.getenv('VERCEL')),error=str(exc)),400
+    if os.getenv('VERCEL') and config['profile'] != 'fast':
+        return render_template('index.html',scans=[],nmap_available=False,guest=True,hosted=True,
+                               error='The hosted scanner supports Fast scans only. Use the self-hosted version for broader port ranges.'),400
     if not g.user: config['guest_id']=session['guest_id']
-    job=jobs.create(target['host'],config,g.user['id'] if g.user else None); audit('scan.create',job['id']); submit(job['id']); return redirect(url_for('scan_detail',scan_id=job['id']))
+    job=jobs.create(target['host'],config,g.user['id'] if g.user else None); audit('scan.create',job['id'])
+    if os.getenv('VERCEL'):
+        _run(job['id'])
+    else:
+        submit(job['id'])
+    return redirect(url_for('scan_detail',scan_id=job['id']))
 
 @app.get('/history')
 def history(): return redirect(url_for('index'))
@@ -92,7 +100,7 @@ def require_scan(scan_id):
 @scanner_access_required
 def scan_detail(scan_id):
     job=require_scan(scan_id)
-    return render_template('scan.html',scan=job,previous=None,comparison=None)
+    return render_template('scan.html',scan=job,previous=None,comparison=None,hosted=bool(os.getenv('VERCEL')))
 
 @app.get('/api/scans/<scan_id>')
 @scanner_access_required

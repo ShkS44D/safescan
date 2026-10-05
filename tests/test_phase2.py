@@ -54,6 +54,10 @@ class PhaseTwoTests(unittest.TestCase):
     def test_progress_api_and_cancel(self):
         job = self.create_job()
         jobs.update(job['id'], status='running', phase='Scanning TCP ports', progress=42)
+        page = self.client.get(f"/scans/{job['id']}")
+        self.assertIn(b'<progress', page.data)
+        self.assertIn(b'value="42"', page.data)
+        self.assertNotIn(b'style="width:', page.data)
         payload = self.client.get(f"/api/scans/{job['id']}").get_json()
         self.assertEqual((payload['status'], payload['progress']), ('running', 42))
         response = self.client.post(f"/scans/{job['id']}/cancel")
