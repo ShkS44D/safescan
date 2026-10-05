@@ -14,7 +14,7 @@ from flask import Flask, jsonify, render_template, request
 from scanner.port_scanner import scan_ports
 from utils.netguard import normalize_target, require_public_ip, resolve_public_target
 
-RATE_LIMIT_REQUESTS = int(os.getenv("SAFESCAN_RATE_LIMIT_REQUESTS", "90"))
+RATE_LIMIT_REQUESTS = int(os.getenv("SAFESCAN_RATE_LIMIT_REQUESTS", "150"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("SAFESCAN_RATE_LIMIT_WINDOW", "60"))
 MAX_CHUNK_PORTS = 2_000
 

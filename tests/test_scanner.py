@@ -3,6 +3,7 @@
 import socket
 import threading
 import unittest
+from unittest.mock import patch
 
 from scanner import port_scanner
 
@@ -37,6 +38,33 @@ class LocalServer:
 
 
 class ScannerTests(unittest.TestCase):
+    def test_scan_uses_serverless_safe_worker_limit(self):
+        created_workers = []
+
+        class RecordingExecutor:
+            def __init__(self, max_workers, thread_name_prefix):
+                created_workers.append(max_workers)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def submit(self, function, *args):
+                class CompletedFuture:
+                    def result(self):
+                        return function(*args)
+
+                return CompletedFuture()
+
+        with patch.object(port_scanner, "ThreadPoolExecutor", RecordingExecutor), patch.object(
+            port_scanner, "as_completed", side_effect=lambda futures: futures
+        ), patch.object(port_scanner, "scan_port", return_value=None):
+            port_scanner.scan_ports("127.0.0.1", "localhost", 1, 1000)
+
+        self.assertEqual(created_workers, [160])
+
     def test_ssh_banner_and_closed_port(self):
         server = LocalServer(b"SSH-2.0-OpenSSH_9.6\r\n").start()
         result = port_scanner.scan_ports("127.0.0.1", "localhost", server.port, server.port)

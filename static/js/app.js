@@ -1,5 +1,7 @@
 const CHUNK_SIZE = 1000;
 const PARALLEL_CHUNKS = 3;
+const CHUNK_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 600;
 const COMMON_RANGES = [
   [20, 25], [53, 53], [67, 69], [80, 81], [88, 88], [110, 111], [123, 123],
   [135, 139], [143, 143], [161, 162], [179, 179], [389, 389], [443, 445],
@@ -69,6 +71,14 @@ function selectedChunks() {
   return rangeChunks(Number(startInput.value), Number(endInput.value));
 }
 
+class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 async function api(url, body, controller) {
   const response = await fetch(url, {
     method: 'POST',
@@ -77,8 +87,35 @@ async function api(url, body, controller) {
     signal: controller.signal
   });
   const payload = await response.json().catch(() => ({error: 'The server returned an invalid response.'}));
-  if (!response.ok) throw new Error(payload.error || 'The request failed.');
+  if (!response.ok) throw new ApiError(payload.error || 'The request failed.', response.status);
   return payload;
+}
+
+function retryDelay(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, milliseconds);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(new DOMException('The request was cancelled.', 'AbortError'));
+    }, {once: true});
+  });
+}
+
+async function scanChunk(body, controller) {
+  for (let attempt = 1; attempt <= CHUNK_RETRIES; attempt += 1) {
+    try {
+      return await api('/api/scan', body, controller);
+    } catch (error) {
+      const transientStatus = error instanceof ApiError && [500, 502, 503, 504].includes(error.status);
+      const networkFailure = error instanceof TypeError;
+      if (error.name === 'AbortError' || attempt === CHUNK_RETRIES || (!transientStatus && !networkFailure)) {
+        throw error;
+      }
+      const delay = RETRY_BASE_DELAY_MS * (2 ** (attempt - 1)) + Math.random() * 250;
+      await retryDelay(delay, controller.signal);
+    }
+  }
+  throw new Error('The scan chunk could not be completed.');
 }
 
 function formatDuration(seconds) {
@@ -128,7 +165,7 @@ async function worker(queue, resolved, total, progressState) {
     const [start, end] = queue.shift();
     const controller = new AbortController();
     controllers.push(controller);
-    const chunk = await api('/api/scan', {
+    const chunk = await scanChunk({
       ip: resolved.ip, host: resolved.host, start, end, authorized: true
     }, controller);
     resultData.open.push(...chunk.open);

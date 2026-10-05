@@ -8,7 +8,9 @@ import socket
 import ssl
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-SCAN_THREADS = int(os.getenv("SAFESCAN_SCAN_THREADS", "400"))
+# Vercel's Python runtime cannot reliably create 400 native threads. At 160
+# workers, a 1,000-port chunk still completes within the function time budget.
+SCAN_THREADS = int(os.getenv("SAFESCAN_SCAN_THREADS", "160"))
 CONNECT_TIMEOUT = float(os.getenv("SAFESCAN_CONNECT_TIMEOUT", "0.8"))
 BANNER_TIMEOUT = float(os.getenv("SAFESCAN_BANNER_TIMEOUT", "1.0"))
 BANNER_LIMIT = 200
