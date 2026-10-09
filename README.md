@@ -1,4 +1,4 @@
-# SafeScan
+# SafeScan V1.0
 
 SafeScan is a stateless public TCP port scanner for authorized checks. The browser divides a selected port range into 1,000-port chunks, runs three requests concurrently, and renders open ports as they are found. The server performs TCP connect scans and conservative banner-based service identification.
 
